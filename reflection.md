@@ -2,15 +2,25 @@
 
 ## 1. System Design
 
-**a. Initial design**
+**a. Three core user actions**
 
-- Briefly describe your initial UML design.
-- What classes did you include, and what responsibilities did you assign to each?
+1. **Add a pet** — the owner enters their pet's name, species, and age to create a profile in the system.
+2. **Schedule a care task** — the owner adds a task (walk, feeding, medication, grooming, etc.) with a due time, duration, and recurrence to a pet's plan.
+3. **View today's plan** — the owner sees all upcoming tasks sorted by time, with conflict warnings if any tasks overlap.
 
-**b. Design changes**
+**b. Initial design**
 
-- Did your design change during implementation?
-- If yes, describe at least one change and why you made it.
+My initial UML design centered on three core classes: `Task`, `Pet`, and `Scheduler`.
+
+- **Task** is a dataclass that holds a single care activity. It stores the task's id, description, due time, duration in minutes, completion status, and recurrence frequency (Once, Daily, or Weekly). It has a single `mark_complete()` method to flip its completion flag.
+
+- **Pet** is a dataclass representing a pet's profile. It stores the pet's id, name, species, and age, and maintains a list of `Task` objects associated with that pet. It exposes an `add_task()` method to append new tasks to its list.
+
+- **Scheduler** is the coordinating class that manages all pets and their tasks. It holds a list of `Pet` objects and provides methods to aggregate tasks across all pets (`get_all_tasks`), retrieve upcoming tasks in sorted order (`get_upcoming_tasks`), detect scheduling conflicts for a new task (`check_conflicts`), and generate next instances of recurring tasks (`generate_recurring_tasks`).
+
+**c. Design changes**
+
+Yes, the design changed during implementation. Initially I expected the `Task` class to handle conflict detection by comparing its own time range against others, but I moved that responsibility into `Scheduler.check_conflicts()` instead. The `Scheduler` already has visibility into every pet's task list, so it was a more natural place to compare time ranges (start time through start time plus duration) across all tasks. Giving conflict logic to `Task` would have required passing in external task lists, which violated the principle that a task should only know about itself.
 
 ---
 

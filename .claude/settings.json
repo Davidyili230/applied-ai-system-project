@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/davidli/Desktop/**)",
+      "Bash(find . -not -path */.* -type f -o -type d)"
+    ]
+  }
+}
