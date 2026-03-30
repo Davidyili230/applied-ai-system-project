@@ -22,6 +22,16 @@ My initial UML design centered on three core classes: `Task`, `Pet`, and `Schedu
 
 Yes, the design changed during implementation. Initially I expected the `Task` class to handle conflict detection by comparing its own time range against others, but I moved that responsibility into `Scheduler.check_conflicts()` instead. The `Scheduler` already has visibility into every pet's task list, so it was a more natural place to compare time ranges (start time through start time plus duration) across all tasks. Giving conflict logic to `Task` would have required passing in external task lists, which violated the principle that a task should only know about itself.
 
+**AI review findings (Step 5):**
+
+After asking the AI to review the skeleton, three potential issues were flagged:
+
+1. **Missing pet context in flat task lists.** `get_all_tasks()` and `get_upcoming_tasks()` return `list[Task]` with no reference to the owning pet. A display layer (e.g. "Buddy's walk at 3 pm") cannot be built from that list alone. The AI suggested either adding a `pet_id` field to `Task` or returning `list[tuple[Pet, Task]]` from those methods. I accepted this feedback and added a `pet_id` field to `Task` so each task carries its owner's identity without requiring the caller to zip lists together.
+
+2. **`generate_recurring_tasks` creates orphaned tasks.** The method builds new `Task` objects but never calls `pet.add_task()`, so the generated tasks are never stored anywhere. The AI flagged this as an easy-to-miss logic gap. I acknowledged this as a known limitation for the current skeleton stage; attaching generated tasks to their parent pets would be part of the next implementation step.
+
+3. **Cross-pet conflict detection.** `check_conflicts` compares a new task against every task from every pet, which means a dog walk and a simultaneous cat feeding would register as a conflict even though they involve different animals and potentially different caregivers. The AI suggested scoping conflict checks per-pet. I decided to keep the global check for now because the MVP assumes a single owner managing all pets, so any two overlapping activities do compete for that one owner's attention. This is a deliberate tradeoff documented in section 2b.
+
 ---
 
 ## 2. Scheduling Logic and Tradeoffs
