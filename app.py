@@ -1,15 +1,65 @@
 import streamlit as st
 from datetime import datetime, date, time
-from pawpal_system import Owner, Pet, Task, Scheduler, Frequency
+import os
+from pawpal_system import Owner, Pet, Task, Scheduler, Frequency, Priority
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
 
-# --- Session state init ---
+DATA_FILE = "data.json"
+
+# Priority display helpers
+_PRIORITY_EMOJI = {
+    Priority.HIGH: "🔴",
+    Priority.MEDIUM: "🟡",
+    Priority.LOW: "🟢",
+}
+_PRIORITY_LABEL = {
+    Priority.HIGH: "🔴 High",
+    Priority.MEDIUM: "🟡 Medium",
+    Priority.LOW: "🟢 Low",
+}
+
+# Task-type emoji detection (keyword → emoji)
+_TASK_EMOJIS = [
+    ({"walk", "jog", "run", "hike", "stroll"}, "🦮"),
+    ({"feed", "feeding", "meal", "food", "dinner", "breakfast", "lunch", "treat"}, "🍽️"),
+    ({"medication", "medicine", "pill", "dose", "med", "inject"}, "💊"),
+    ({"groom", "grooming", "bath", "brush", "trim", "nail", "clip"}, "✂️"),
+    ({"vet", "checkup", "vaccine", "shot", "appointment"}, "🏥"),
+    ({"play", "playtime", "fetch", "toy", "enrichment", "game"}, "🎾"),
+    ({"train", "training", "sit", "stay", "command", "obedience"}, "🎓"),
+    ({"water", "hydrate", "drink"}, "💧"),
+    ({"clean", "litter", "scoop", "cage", "tank"}, "🧹"),
+]
+
+
+def _task_emoji(description: str) -> str:
+    """Return an emoji that matches the task description, or a generic paw."""
+    lower = description.lower()
+    for keywords, emoji in _TASK_EMOJIS:
+        if any(kw in lower for kw in keywords):
+            return emoji
+    return "🐾"
+
+
+# --- Session state init: load from file or create fresh owner ---
 if "owner" not in st.session_state:
-    st.session_state.owner = Owner(name="Jordan", email="jordan@example.com")
+    if os.path.exists(DATA_FILE):
+        try:
+            st.session_state.owner = Owner.load_from_json(DATA_FILE)
+        except Exception:
+            st.session_state.owner = Owner(name="Jordan", email="jordan@example.com")
+    else:
+        st.session_state.owner = Owner(name="Jordan", email="jordan@example.com")
 
 owner: Owner = st.session_state.owner
+
+
+def _save():
+    """Persist current owner state to data.json."""
+    owner.save_to_json(DATA_FILE)
+
 
 # --- Owner info ---
 st.subheader("Owner")
@@ -29,6 +79,7 @@ with st.form("add_pet_form"):
 if submitted:
     new_pet = Pet(name=pet_name, species=species, age=age)
     owner.add_pet(new_pet)
+    _save()
     st.success(f"Added {new_pet.name} the {new_pet.species}!")
 
 if owner.pets:
@@ -53,6 +104,12 @@ else:
         task_desc = st.text_input("Task description", value="Morning walk")
         duration = st.number_input("Duration (minutes)", min_value=1, max_value=240, value=20)
         recurrence = st.selectbox("Recurrence", [f.value for f in Frequency])
+        priority = st.selectbox(
+            "Priority",
+            [p.value for p in Priority],
+            index=1,  # default to "medium"
+            format_func=lambda v: _PRIORITY_LABEL[Priority(v)],
+        )
 
         col_date, col_time = st.columns(2)
         with col_date:
@@ -74,6 +131,7 @@ else:
             duration_minutes=int(duration),
             due_time=due_datetime,
             recurrence=Frequency(recurrence),
+            priority=Priority(priority),
         )
 
         # Check for conflicts before committing
@@ -81,12 +139,31 @@ else:
         conflict = scheduler.check_conflicts(new_task)
 
         target_pet.add_task(new_task)
+        _save()
         st.success(f"Task **'{task_desc}'** added to {target_pet.name}.")
 
         if conflict:
-            # Strip the "WARNING: " prefix since st.warning already signals urgency
             friendly = conflict.replace("WARNING: ", "")
-            st.warning(f"**Schedule conflict detected!** {friendly}\n\nConsider adjusting the time or duration so your pet's care doesn't overlap.")
+            st.warning(
+                f"**Schedule conflict detected!** {friendly}\n\n"
+                "Consider adjusting the time or duration so your pet's care doesn't overlap."
+            )
+
+    # --- Next Available Slot finder ---
+    st.write("**Find next available slot**")
+    with st.form("slot_finder_form"):
+        slot_duration = st.number_input(
+            "Task duration to fit (minutes)", min_value=1, max_value=480, value=30
+        )
+        slot_submitted = st.form_submit_button("Find slot")
+
+    if slot_submitted:
+        scheduler = Scheduler(owner)
+        next_slot = scheduler.find_next_available_slot(slot_duration)
+        st.info(
+            f"Next conflict-free slot for a **{slot_duration}-minute** task: "
+            f"**{next_slot.strftime('%b %d, %Y at %I:%M %p')}**"
+        )
 
 st.divider()
 
@@ -138,23 +215,26 @@ else:
     elif status_filter == "Completed":
         filtered_tasks = [t for t in filtered_tasks if t.is_complete]
 
-    # Sort by due time
+    # Sort by priority first, then due time (Challenge 3)
     sorted_tasks = scheduler.sort_by_time(filtered_tasks)
 
     if not sorted_tasks:
         st.info("No tasks match your current filter.")
     else:
-        # Build a display table
+        # Build a display table with emoji color coding (Challenge 3 & 4)
         table_rows = []
         for task in sorted_tasks:
             due_str = task.due_time.strftime("%b %d, %Y  %I:%M %p") if task.due_time else "No due time"
+            emoji = _task_emoji(task.description)
+            status_icon = "✅ Done" if task.is_complete else "⏳ Pending"
             table_rows.append({
+                "Priority": _PRIORITY_LABEL[task.priority],
                 "Pet": pet_lookup.get(task.id, "—"),
-                "Task": task.description,
+                "Task": f"{emoji} {task.description}",
                 "Duration": f"{task.duration_minutes} min",
                 "Due": due_str,
                 "Recurrence": task.recurrence.value,
-                "Status": "✅ Done" if task.is_complete else "🕐 Pending",
+                "Status": status_icon,
             })
 
         st.table(table_rows)
@@ -165,7 +245,9 @@ else:
             st.write("**Mark a task complete:**")
             for task in pending_tasks:
                 pet_name = pet_lookup.get(task.id, "")
-                label = f"Complete: {task.description}"
+                emoji = _task_emoji(task.description)
+                priority_icon = _PRIORITY_EMOJI[task.priority]
+                label = f"{priority_icon} {emoji} Complete: {task.description}"
                 if pet_name:
                     label += f" ({pet_name})"
                 if task.due_time:
@@ -173,6 +255,7 @@ else:
 
                 if st.button(label, key=f"complete_{task.id}"):
                     scheduler.mark_task_complete(task.id)
+                    _save()
                     st.success(f"'{task.description}' marked complete!")
                     if task.recurrence in (Frequency.DAILY, Frequency.WEEKLY):
                         st.info(f"Next {task.recurrence.value} occurrence has been scheduled automatically.")

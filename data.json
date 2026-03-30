@@ -1,0 +1,41 @@
+{
+  "name": "Jordan",
+  "email": "jordan@example.com",
+  "id": "0e5a4d84-0e96-42df-b594-c4c9553a80c9",
+  "pets": [
+    {
+      "name": "Mochi",
+      "species": "dog",
+      "age": 2,
+      "id": "d1e6f396-dd12-45c6-a909-ab842e0290c7",
+      "tasks": [
+        {
+          "description": "Morning walk",
+          "duration_minutes": 20,
+          "due_time": null,
+          "recurrence": "once",
+          "priority": "medium",
+          "id": "97102fb3-77a0-4cb2-b62b-43854fa5b83a",
+          "is_complete": false
+        }
+      ]
+    },
+    {
+      "name": "Choco",
+      "species": "dog",
+      "age": 4,
+      "id": "3094d845-a167-44e8-80dd-686bdc539cd3",
+      "tasks": [
+        {
+          "description": "Breakfast",
+          "duration_minutes": 10,
+          "due_time": "2026-03-01T08:00:00",
+          "recurrence": "daily",
+          "priority": "high",
+          "id": "247913eb-2319-42b7-93c7-10f4d7a1b136",
+          "is_complete": false
+        }
+      ]
+    }
+  ]
+}

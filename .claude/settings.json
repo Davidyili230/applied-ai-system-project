@@ -29,7 +29,16 @@
       "Bash(python -m pytest tests/test_pawpal.py -v)",
       "Bash(python3 -m pytest tests/test_pawpal.py -v)",
       "Bash(pytest tests/test_pawpal.py -v)",
-      "Bash(PYTHONPATH=. pytest tests/test_pawpal.py -v)"
+      "Bash(PYTHONPATH=. pytest tests/test_pawpal.py -v)",
+      "Bash(PYTHONPATH=. python -m pytest tests/test_pawpal.py -v)",
+      "Bash(PYTHONPATH=. python3 -m pytest tests/test_pawpal.py -v)",
+      "Bash(source .venv/bin/activate)",
+      "Bash(ls /usr/local/bin/python*)",
+      "Bash(ls /opt/homebrew/bin/python*)",
+      "Bash(pip3 show:*)",
+      "Bash(/usr/local/bin/python3 -c \"import pytest\")",
+      "Bash(PYTHONPATH=. pip3 run pytest tests/test_pawpal.py -v)",
+      "Bash(PYTHONPATH=. /usr/local/bin/python3 -m pytest tests/test_pawpal.py -v)"
     ]
   }
 }

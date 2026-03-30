@@ -167,3 +167,100 @@ Using a fresh chat session for each phase prevented context contamination. In Ph
 Working with Copilot on a multi-class system taught me that AI tools shift the bottleneck in software development from *typing* to *deciding*. Copilot can write a correct method body in seconds; it cannot decide whether that method belongs on `Task` or `Scheduler`, whether a conflict should be a returned string or a raised exception, or whether the UI should warn before or after saving a task. Every one of those decisions shaped the final system, and every one of them required me to hold the whole design in my head and ask "does this fit?"
 
 The lead architect role in an AI-assisted workflow is less about writing code and more about maintaining a coherent mental model of the system — knowing *why* each class exists, what each method is responsible for, and where the boundaries are. When I had that model clearly in mind, AI suggestions were easy to evaluate: "does this fit my model?" When the model was fuzzy, I accepted suggestions that felt reasonable in isolation but created friction later. The lesson is that the investment in clear upfront design (UML, docstrings, explicit responsibility boundaries) pays back double when working with AI, because it gives you the criteria to accept or reject suggestions quickly and confidently.
+
+---
+
+## 7. Prompt Comparison — Multi-Model Analysis
+
+**Task:** Implement the logic for rescheduling weekly recurring tasks when `mark_task_complete` is called — specifically, compute the next due date and attach the new task to the correct pet.
+
+### Prompt used (identical for both models)
+
+> "In a Python scheduler where `Owner` holds a list of `Pet` objects and each `Pet` holds a list of `Task` dataclasses with a `due_time: Optional[datetime]` and `recurrence: Frequency` (`ONCE`/`DAILY`/`WEEKLY`), write the body of `mark_task_complete(self, task_id: str) -> bool`. When a DAILY task is completed, create a copy due 24 hours later. When a WEEKLY task is completed, create a copy due 7 days later. Attach the copy to the same pet. Return True if found, False otherwise."
+
+---
+
+### Claude (claude-sonnet-4-6) response
+
+```python
+def mark_task_complete(self, task_id: str) -> bool:
+    from datetime import timedelta
+
+    for pet in self.owner.pets:
+        for task in pet.tasks:
+            if task.id != task_id:
+                continue
+            task.mark_complete()
+            if task.due_time is not None:
+                if task.recurrence == Frequency.DAILY:
+                    next_due = task.due_time + timedelta(days=1)
+                elif task.recurrence == Frequency.WEEKLY:
+                    next_due = task.due_time + timedelta(weeks=1)
+                else:
+                    next_due = None
+                if next_due is not None:
+                    pet.add_task(Task(
+                        description=task.description,
+                        duration_minutes=task.duration_minutes,
+                        due_time=next_due,
+                        recurrence=task.recurrence,
+                    ))
+            return True
+    return False
+```
+
+**Explanation provided by Claude:** Nested loop searches by pet then task; early `continue` on ID mismatch keeps the critical path flat; a single `return True` inside the loop exits immediately after processing, avoiding redundant iteration. The `timedelta` import is placed inside the method to minimize top-level imports on a module that may not always need it. `next_due = None` is set explicitly before the ONCE branch so the `if next_due` guard is always well-defined.
+
+---
+
+### OpenAI GPT-4o response
+
+```python
+def mark_task_complete(self, task_id: str) -> bool:
+    from datetime import timedelta
+    task_map = {
+        task.id: (pet, task)
+        for pet in self.owner.pets
+        for task in pet.tasks
+    }
+    if task_id not in task_map:
+        return False
+    pet, task = task_map[task_id]
+    task.mark_complete()
+    delta_map = {
+        Frequency.DAILY: timedelta(days=1),
+        Frequency.WEEKLY: timedelta(weeks=1),
+    }
+    if task.due_time and task.recurrence in delta_map:
+        next_task = Task(
+            description=task.description,
+            duration_minutes=task.duration_minutes,
+            due_time=task.due_time + delta_map[task.recurrence],
+            recurrence=task.recurrence,
+        )
+        pet.add_task(next_task)
+    return True
+```
+
+**Explanation provided by GPT-4o:** Pre-build a `task_map` dictionary for O(1) lookup instead of O(n) nested loops. Use a `delta_map` dictionary to avoid an if/elif chain — adding a new recurrence type only requires one new dict entry. Separating task lookup from mutation keeps each step testable in isolation.
+
+---
+
+### Comparison
+
+| Dimension | Claude | GPT-4o |
+|---|---|---|
+| **Algorithmic approach** | Nested loop with early exit | Dict comprehension + O(1) lookup |
+| **Readability** | Explicit and linear — easy to trace | Slightly more abstract (two dict lookups) |
+| **Pythonic style** | Conservative — familiar loop idiom | More idiomatic use of dict-as-dispatch |
+| **Extensibility** | Adding a new frequency requires new `elif` | Adding a new frequency is one dict entry |
+| **Memory usage** | O(1) extra space | O(n) for the task_map |
+| **Modularity** | Single method, self-contained | Natural split point between lookup and mutation |
+
+**Verdict:** GPT-4o's `delta_map` dispatch pattern is more Pythonic and more extensible — eliminating the if/elif chain is a clear win for maintainability. However, the `task_map` dictionary comprehension is wasteful when the task list is large and the match is found early, since it eagerly materializes the entire list before looking anything up.
+
+Claude's nested-loop approach is more memory-efficient (O(1) extra space, early exit on first match) and easier to follow for a reader who isn't familiar with dict-dispatch patterns. It's also a closer match to the mental model of "a task lives inside a pet" because the `pet` reference is naturally in scope when the task is found.
+
+**Implementation choice:** The final code uses Claude's loop structure for clarity and O(1) space, but adopts GPT-4o's single-assignment style (`next_due` is computed once and used once) and its explicit pre-check `if task.due_time is not None` to avoid implicit `None` arithmetic. The `delta_map` idea was not adopted because the system currently has only two recurring frequencies, making the if/elif chain unambiguous — the abstraction would add complexity without yet earning it.
+
+**Key takeaway:** GPT-4o tends to offer more idiomatic, data-driven Python patterns (dicts as dispatch tables, comprehensions). Claude tends to produce more explicit, traceable logic that preserves mental-model alignment with the domain structure. For a domain model where clarity and structural correspondence matter more than abstract elegance, Claude's output required less post-processing. For a utility function with many cases, GPT-4o's dispatch pattern would be the cleaner choice.
