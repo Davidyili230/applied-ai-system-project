@@ -4,7 +4,16 @@
       "Read(//Users/davidli/Desktop/**)",
       "Bash(find . -not -path */.* -type f -o -type d)",
       "Bash(python main.py)",
-      "Bash(python3 main.py)"
+      "Bash(python3 main.py)",
+      "Bash(pip install:*)",
+      "Bash(python3 -m pytest -v)",
+      "Bash(pip3 install:*)",
+      "Bash(python3 -m pytest --version)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/**)",
+      "Bash(/usr/local/bin/python3 -m pytest --version)",
+      "Bash(/usr/local/bin/python3 -m pip install pytest -q)",
+      "Bash(/usr/local/bin/python3 -m pytest -v)"
     ]
   }
 }
