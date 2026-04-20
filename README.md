@@ -302,6 +302,34 @@ The corollary is that the cost of a blurry spec falls on the human, not the mode
 
 ---
 
+### Responsible AI Reflection
+
+**Limitations and biases in the system**
+
+PawPal+'s AI layer inherits the biases baked into its knowledge base. The three markdown documents (`dog_care.md`, `cat_care.md`, `general_care.md`) were written for a North American context — recommended vaccination schedules, vet-visit frequencies, and portion sizes all assume access to routine veterinary care and name-brand commercial pet food. An owner in a region with different veterinary norms, a limited-income household, or an owner with an exotic or less-common pet breed would receive advice that is either inapplicable or confidently wrong. The RAG retriever picks whichever single document best matches the query by token overlap; if the query straddles multiple topics (e.g., "senior diabetic dog's feeding schedule"), only one document is injected, so the model fills in the gaps with its pre-training weights — which may not match the knowledge base's specific recommendations.
+
+Scheduling conflict detection has its own implicit bias: it assumes a **single, always-available owner**. A household with two caregivers, or a working owner who has a dog walker during the day, would see false conflicts flagged for tasks that could legitimately run in parallel under different people.
+
+**Potential misuse and prevention**
+
+The assistant can write tasks, add pets, and delete tasks through natural language — all without confirmation prompts. A malicious or careless prompt like "delete all of Buddy's tasks" executes immediately. More plausibly, a user who phrases a request ambiguously ("clear Buddy's schedule for today") could lose data they didn't intend to remove. The current system mitigates this only through the 8-round agentic loop cap, which limits blast radius but doesn't prevent a single destructive tool call.
+
+A stronger mitigation would be to require explicit confirmation before any destructive operation (`delete_task`, `delete_pet`) and to persist a short undo history in `data.json`. Neither is implemented in this version. The knowledge base also gives veterinary-style advice; a user who treats the AI's output as a medical substitute rather than a scheduling aid could make a harmful care decision. A short disclaimer injected into every system prompt ("I can help organize care schedules but I am not a veterinarian — always consult a vet for medical questions") would reduce that risk at near-zero cost.
+
+**Surprises during reliability testing**
+
+The most surprising finding was how gracefully the model handled **implicit context it was never given**. When asked "when should I feed Whiskers?", the model retrieved `cat_care.md` and produced a feeding schedule grounded in the document — but it also inferred from the cat's name and context that "Whiskers" was registered in the system and correctly called `list_tasks` to check existing feeding entries before responding. The RAG layer and the tool-use loop composed without being explicitly designed to do so.
+
+The second surprise was the opposite failure: the model occasionally **hallucinated tool arguments**. In one test session, when asked to "schedule a bath for Buddy at some point next week," Claude chose an arbitrary datetime (`2026-04-28T10:00:00`) and called `add_task` without telling the user it was guessing. The task was created silently. Because the agentic loop returns Claude's narrative response rather than a structured audit trail, the user had no way to know the time was invented. This is a silent-failure mode that unit tests don't catch — it requires manual session testing to observe.
+
+**AI collaboration: one helpful suggestion, one flawed one**
+
+*Helpful:* When I described the orphaned-task bug (recurring tasks created by `generate_recurring_tasks()` that were never appended to a pet), Claude diagnosed the root cause immediately: the method built `Task` objects and returned them, but the caller was never guaranteed to attach them. It suggested moving the spawn logic into `mark_task_complete` so that the new task is attached to the correct `Pet` object at the moment of creation, making the bug structurally impossible. That was the right call and it is the design in the current codebase.
+
+*Flawed:* Claude suggested adding a `pet_id` field directly to the `Task` class so that flat task lists could identify their owner without walking the object tree. On the surface this is reasonable, but it creates a second source of truth: `task.pet_id` would need to stay in sync with the actual `Pet` that holds the task in its `pet.tasks` list, and there is no enforcement mechanism to keep them consistent. The suggestion optimized for read convenience at the expense of data integrity. I rejected it and built a `pet_lookup` dict at render time in `app.py` instead — pet identity is resolved at display time from the live object graph, not stored redundantly on the task.
+
+---
+
 ## Project Structure
 
 ```
