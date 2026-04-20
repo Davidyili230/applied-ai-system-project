@@ -45,11 +45,22 @@ class KnowledgeBase:
     def __init__(self, kb_dir: str = "knowledge_base"):
         self.docs: dict[str, str] = {}
         self.last_confidence: float = 0.0  # normalized 0.0–1.0; updated by retrieve()
+        self.last_retrieved_doc: str = ""   # name of the document selected by retrieve()
         kb_path = Path(kb_dir)
         if kb_path.exists():
             for f in sorted(kb_path.glob("*.md")):
                 self.docs[f.stem] = f.read_text(encoding="utf-8")
         logger.info("KnowledgeBase: loaded %d document(s) from '%s'", len(self.docs), kb_dir)
+
+    def add_document(self, name: str, content: str) -> None:
+        """Add or replace a document in the knowledge base at runtime.
+
+        Args:
+            name: A short identifier for the document (used as the doc stem).
+            content: The full text content of the document.
+        """
+        self.docs[name] = content
+        logger.info("KnowledgeBase: added/updated document '%s' (%d chars)", name, len(content))
 
     def retrieve(self, query: str) -> str:
         """Return the most relevant knowledge base document for *query*.
@@ -61,6 +72,7 @@ class KnowledgeBase:
         """
         if not self.docs:
             self.last_confidence = 0.0
+            self.last_retrieved_doc = ""
             return ""
 
         query_tokens = set(query.lower().split())
@@ -71,14 +83,100 @@ class KnowledgeBase:
         best = max(scores, key=scores.get)
         if scores[best] == 0:
             self.last_confidence = 0.0
+            self.last_retrieved_doc = ""
             return ""
 
         self.last_confidence = scores[best] / len(query_tokens) if query_tokens else 0.0
+        self.last_retrieved_doc = best
         logger.info(
             "RAG: '%s' selected (overlap=%d, confidence=%.2f) for query %r",
             best, scores[best], self.last_confidence, query,
         )
         return f"[Reference: {best.replace('_', ' ').title()}]\n{self.docs[best]}"
+
+    def get_all_scores(self, query: str) -> dict[str, float]:
+        """Return normalized retrieval scores for every document in the knowledge base.
+
+        Args:
+            query: The search query to score against all documents.
+
+        Returns:
+            A dict mapping document name → normalized score (0.0–1.0).
+        """
+        if not self.docs:
+            return {}
+
+        query_tokens = set(query.lower().split())
+        if not query_tokens:
+            return {name: 0.0 for name in self.docs}
+
+        scores = {
+            name: len(query_tokens & set(content.lower().split())) / len(query_tokens)
+            for name, content in self.docs.items()
+        }
+        return scores
+
+
+# ---------------------------------------------------------------------------
+# Few-shot examples for specialized mode (Feature 3)
+# ---------------------------------------------------------------------------
+
+FEW_SHOT_EXAMPLES = """
+User: How often should I feed my golden retriever?
+Assistant: Great question for your 🐕! Here's a simple feeding guide for adult golden retrievers:
+
+- **Morning meal** — around 7–8 AM, roughly 1–1.5 cups of high-quality kibble
+- **Evening meal** — around 5–6 PM, same portion
+- **Fresh water** — always available and refreshed at least twice daily
+
+Goldens can be enthusiastic eaters, so measure portions carefully to avoid overfeeding. If your pup has any health conditions (like weight issues or allergies), your vet may suggest a customized plan.
+
+*Follow-up: Does your golden have any dietary restrictions I should factor into their schedule?* 🐾
+
+---
+
+User: My cat hasn't used the litter box in a day — should I be worried?
+Assistant: Oh no — that's definitely worth paying close attention to! 🐈 Here's what to consider:
+
+**When to act right away:**
+- If your cat is straining, crying in pain, or producing no urine at all → **call your vet immediately** (urinary blockage is an emergency)
+- Vomiting or lethargy alongside litter box avoidance → vet visit today
+
+**Possible causes (less urgent):**
+1. Litter box isn't clean enough — cats are particular!
+2. Stress from changes at home (new pet, moved furniture, guests)
+3. New litter brand they dislike
+4. A UTI or mild digestive upset
+
+**Quick checklist:**
+- Scoop and clean the box thoroughly
+- Offer an extra box in a quiet spot
+- Watch for any signs of discomfort when they try
+
+I'm routing this as a **high-priority** item in your schedule so you don't lose track!
+
+*Follow-up: How old is your cat, and have there been any recent changes at home?* 🐈
+
+---
+
+User: Can you add a weekly grooming session for my rabbit Biscuit?
+Assistant: Absolutely — Biscuit deserves a spa day! 🐇 I've added a weekly grooming session to the schedule. Here's what that looks like:
+
+**Task added:**
+- 📋 Description: Weekly grooming — Biscuit
+- ⏱ Duration: 20 minutes
+- 🔁 Recurrence: Weekly
+- ⭐ Priority: Medium
+
+**Quick grooming tips for rabbits:**
+- Use a soft slicker brush; long-haired breeds may need daily attention
+- Check ears, nails, and teeth during each session
+- Never bathe a rabbit in water — spot-clean only if needed
+
+I'll remind you each week so Biscuit's coat stays healthy and mat-free!
+
+*Follow-up: Would you like me to find the best time slot so grooming doesn't clash with Biscuit's feeding schedule?* 🐾
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -212,12 +310,14 @@ class PawPalAI:
         owner: Owner,
         kb_dir: str = "knowledge_base",
         save_callback=None,
+        specialized: bool = False,
     ):
         self.owner = owner
         self.scheduler = Scheduler(owner)
         self.kb = KnowledgeBase(kb_dir)
         self.client = anthropic.Anthropic()
         self.save_callback = save_callback
+        self.specialized = specialized
         self.conversation_history: list[dict] = []
         logger.info("PawPalAI ready for owner '%s'", owner.name)
 
@@ -366,7 +466,7 @@ class PawPalAI:
     # Main chat entry point
     # ------------------------------------------------------------------
 
-    def chat(self, user_message: str) -> str:
+    def chat(self, user_message: str) -> tuple[str, list[dict]]:
         """Process *user_message* with RAG context injection and agentic tool use.
 
         Flow:
@@ -374,9 +474,14 @@ class PawPalAI:
           2. Inject retrieved context into the system prompt.
           3. Send conversation to Claude with tool definitions.
           4. Execute any tool calls and feed results back (up to MAX_TOOL_ROUNDS).
-          5. Return Claude's final text response.
+          5. Return (Claude's final text response, list of agentic steps).
+
+        Each step in the returned list has the shape:
+            {"round": int, "tool": str, "input": dict, "output": str}
         """
         logger.info("User: %r", user_message)
+
+        steps: list[dict] = []
 
         # Step 1 — RAG retrieval
         rag_context = self.kb.retrieve(user_message)
@@ -392,6 +497,10 @@ class PawPalAI:
         )
         if rag_context:
             system += f"\n\nRelevant pet care reference material:\n\n{rag_context}"
+
+        # Feature 3: inject few-shot style guide when specialized mode is active
+        if self.specialized:
+            system += f"\n\nSTYLE GUIDE AND FEW-SHOT EXAMPLES:\n{FEW_SHOT_EXAMPLES}"
 
         # Step 3 — build message list (persistent history + new message)
         self.conversation_history.append({"role": "user", "content": user_message})
@@ -414,13 +523,19 @@ class PawPalAI:
                     b.text for b in response.content if hasattr(b, "text")
                 )
                 self.conversation_history.append({"role": "assistant", "content": text})
-                return text
+                return text, steps
 
             if response.stop_reason == "tool_use":
                 tool_results = []
                 for block in response.content:
                     if block.type == "tool_use":
                         result = self._run_tool(block.name, block.input)
+                        steps.append({
+                            "round": round_num,
+                            "tool": block.name,
+                            "input": dict(block.input),
+                            "output": result,
+                        })
                         tool_results.append(
                             {
                                 "type": "tool_result",
@@ -435,7 +550,10 @@ class PawPalAI:
                 break
 
         logger.warning("MAX_TOOL_ROUNDS (%d) reached", self.MAX_TOOL_ROUNDS)
-        return "I reached my complexity limit on that request. Please try breaking it into smaller steps."
+        return (
+            "I reached my complexity limit on that request. Please try breaking it into smaller steps.",
+            steps,
+        )
 
     def reset_conversation(self) -> None:
         """Clear conversation history for a fresh session."""

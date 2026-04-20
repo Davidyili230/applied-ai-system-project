@@ -286,13 +286,58 @@ if _AI_AVAILABLE:
         ai.owner = owner
         ai.scheduler.__init__(owner)
 
+        # ---------------------------------------------------------------
+        # Feature 1: Add Custom Knowledge expander
+        # ---------------------------------------------------------------
+        with st.expander("📚 Add Custom Knowledge"):
+            custom_doc_name = st.text_input(
+                "Document name",
+                placeholder="e.g. hamster_care",
+                key="custom_doc_name",
+            )
+            custom_doc_content = st.text_area(
+                "Document content",
+                placeholder="Paste or type your custom pet care notes here…",
+                key="custom_doc_content",
+                height=150,
+            )
+            if st.button("Add to Knowledge Base", key="add_custom_doc"):
+                if custom_doc_name.strip() and custom_doc_content.strip():
+                    ai.kb.add_document(custom_doc_name.strip(), custom_doc_content.strip())
+                    st.success(f"Document '{custom_doc_name.strip()}' added to the knowledge base!")
+                else:
+                    st.warning("Please provide both a document name and content.")
+
+        # ---------------------------------------------------------------
+        # Feature 3: Specialized mode toggle
+        # ---------------------------------------------------------------
+        specialized_mode = st.checkbox(
+            "✨ Specialized mode (warm + structured responses)",
+            value=False,
+            key="specialized_mode",
+        )
+
         # Display chat history
         for msg in st.session_state.chat_messages:
             with st.chat_message(msg["role"]):
                 st.markdown(msg["content"])
+                # Re-render RAG info for assistant messages that have it stored
+                if msg["role"] == "assistant" and msg.get("rag_doc"):
+                    rag_doc = msg["rag_doc"]
+                    rag_score = msg["rag_score"]
+                    _rag_label = f"📖 Retrieved: {rag_doc} (confidence: {rag_score:.0%})"
+                    if rag_score > 0.6:
+                        st.caption(f":green[{_rag_label}]")
+                    elif rag_score >= 0.3:
+                        st.caption(f":orange[{_rag_label}]")
+                    else:
+                        st.caption(f":red[{_rag_label}]")
 
         # Chat input
         if prompt := st.chat_input("Ask PawPal AI anything about your pets…"):
+            # Apply current specialized setting before calling chat
+            ai.specialized = specialized_mode
+
             st.session_state.chat_messages.append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
@@ -300,12 +345,44 @@ if _AI_AVAILABLE:
             with st.chat_message("assistant"):
                 with st.spinner("Thinking…"):
                     try:
-                        reply = ai.chat(prompt)
+                        reply, steps = ai.chat(prompt)
                     except Exception as exc:
                         reply = f"Sorry, I encountered an error: {exc}"
+                        steps = []
+
                 st.markdown(reply)
 
-            st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+                # Feature 3: specialized mode caption
+                if specialized_mode:
+                    st.caption("✨ Specialized mode ON — few-shot style guidance active")
+
+                # Feature 1: RAG info line
+                rag_doc = ai.kb.last_retrieved_doc
+                rag_score = ai.kb.last_confidence
+                if rag_doc:
+                    _rag_label = f"📖 Retrieved: {rag_doc} (confidence: {rag_score:.0%})"
+                    if rag_score > 0.6:
+                        st.caption(f":green[{_rag_label}]")
+                    elif rag_score >= 0.3:
+                        st.caption(f":orange[{_rag_label}]")
+                    else:
+                        st.caption(f":red[{_rag_label}]")
+
+                # Feature 2: Agent reasoning expander
+                if steps:
+                    with st.expander(f"🔍 Agent reasoning ({len(steps)} step(s))"):
+                        for step in steps:
+                            st.markdown(f"**Step {step['round']}:** Called `{step['tool']}`")
+                            st.json(step["input"])
+                            st.code(step["output"], language=None)
+
+            # Store message with RAG metadata so it can be re-rendered in history
+            st.session_state.chat_messages.append({
+                "role": "assistant",
+                "content": reply,
+                "rag_doc": rag_doc,
+                "rag_score": rag_score,
+            })
             # Persist any mutations the AI made
             _save()
             st.rerun()

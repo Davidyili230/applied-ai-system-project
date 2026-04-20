@@ -42,7 +42,14 @@
       "Bash(python -m pytest tests/ -v)",
       "Bash(python3 -m pytest tests/ -v)",
       "Bash(pytest tests/ -v)",
-      "Bash(PYTHONPATH=. pytest tests/ -v)"
+      "Bash(PYTHONPATH=. pytest tests/ -v)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.9/bin/python3 -c \"from ai_assistant import KnowledgeBase; print\\('OK'\\)\")",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.9/bin/python3 eval.py)",
+      "Bash(/Library/Frameworks/Python.framework/Versions/3.9/bin/python3 -m pytest tests/ -v)",
+      "Bash(python eval.py)",
+      "Bash(python3 eval.py)",
+      "Bash(pip show *)",
+      "Bash(python3 -c \"import sys; print\\(sys.executable\\)\")"
     ]
   }
 }
