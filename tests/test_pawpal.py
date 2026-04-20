@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from pawpal_system import Task, Pet, Owner, Scheduler, Frequency
+from pawpal_system import Task, Pet, Owner, Scheduler, Frequency, Priority
 
 
 def test_mark_complete_changes_status():
@@ -146,3 +146,112 @@ def test_check_conflicts_no_warning_for_adjacent_tasks():
 
     scheduler = Scheduler(owner)
     assert scheduler.check_conflicts(second) is None
+
+
+# ---------------------------------------------------------------------------
+# Weekly recurrence
+# ---------------------------------------------------------------------------
+
+def test_mark_weekly_task_complete_spawns_next_week():
+    """Completing a WEEKLY task must add a new task due exactly 7 days later."""
+    now = datetime.now()
+    owner = Owner(name="Eve", email="eve@example.com")
+    pet = Pet(name="Rex", species="Dog", age=5)
+    owner.add_pet(pet)
+
+    weekly_task = Task(
+        description="Bath time",
+        duration_minutes=30,
+        due_time=now,
+        recurrence=Frequency.WEEKLY,
+    )
+    pet.add_task(weekly_task)
+
+    scheduler = Scheduler(owner)
+    scheduler.mark_task_complete(weekly_task.id)
+
+    assert weekly_task.is_complete is True
+    assert len(pet.tasks) == 2
+    new_task = pet.tasks[1]
+    assert new_task.is_complete is False
+    assert new_task.description == "Bath time"
+    assert new_task.due_time == weekly_task.due_time + timedelta(weeks=1)
+
+
+# ---------------------------------------------------------------------------
+# Slot finder
+# ---------------------------------------------------------------------------
+
+def test_find_next_available_slot_skips_occupied_windows():
+    """find_next_available_slot must return a start time after any blocking task."""
+    base = datetime(2026, 4, 20, 9, 0)
+    owner = Owner(name="Frank", email="frank@example.com")
+    pet = Pet(name="Cleo", species="Cat", age=3)
+    owner.add_pet(pet)
+
+    # Block 9:00–10:00 with a 60-minute task
+    pet.add_task(Task(description="Morning session", duration_minutes=60, due_time=base))
+
+    scheduler = Scheduler(owner)
+    slot = scheduler.find_next_available_slot(30, start_from=base)
+
+    # Slot must start at 10:00 or later — not inside the blocked window
+    assert slot >= base + timedelta(hours=1)
+
+
+# ---------------------------------------------------------------------------
+# Priority-first sort
+# ---------------------------------------------------------------------------
+
+def test_sort_by_time_priority_first():
+    """High-priority tasks must sort before medium, which sort before low."""
+    now = datetime(2026, 4, 20, 8, 0)
+    low_task    = Task(description="Low",  duration_minutes=10,
+                       due_time=now,                       priority=Priority.LOW)
+    high_task   = Task(description="High", duration_minutes=10,
+                       due_time=now + timedelta(hours=1),  priority=Priority.HIGH)
+    medium_task = Task(description="Med",  duration_minutes=10,
+                       due_time=now + timedelta(hours=2),  priority=Priority.MEDIUM)
+
+    owner = Owner(name="Grace", email="grace@example.com")
+    pet = Pet(name="Ziggy", species="Rabbit", age=1)
+    owner.add_pet(pet)
+    for t in [low_task, high_task, medium_task]:
+        pet.add_task(t)
+
+    scheduler = Scheduler(owner)
+    result = scheduler.sort_by_time()
+
+    assert result[0].description == "High"
+    assert result[1].description == "Med"
+    assert result[2].description == "Low"
+
+
+# ---------------------------------------------------------------------------
+# Cross-pet (global) conflict detection
+# ---------------------------------------------------------------------------
+
+def test_cross_pet_conflict_detected():
+    """A task must conflict with a task belonging to a *different* pet (global scope)."""
+    base_time = datetime(2026, 4, 20, 10, 0)
+    owner = Owner(name="Hank", email="hank@example.com")
+
+    pet_a = Pet(name="Apollo", species="Dog", age=2)
+    pet_b = Pet(name="Bella", species="Cat", age=1)
+    owner.add_pet(pet_a)
+    owner.add_pet(pet_b)
+
+    # Apollo occupies 10:00–10:30
+    pet_a.add_task(Task(description="Apollo walk", duration_minutes=30, due_time=base_time))
+
+    # Bella's task starts at 10:15 — cross-pet overlap
+    conflicting = Task(
+        description="Bella feeding", duration_minutes=15,
+        due_time=base_time + timedelta(minutes=15),
+    )
+
+    scheduler = Scheduler(owner)
+    warning = scheduler.check_conflicts(conflicting)
+
+    assert warning is not None
+    assert "WARNING" in warning

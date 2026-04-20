@@ -44,6 +44,7 @@ class KnowledgeBase:
 
     def __init__(self, kb_dir: str = "knowledge_base"):
         self.docs: dict[str, str] = {}
+        self.last_confidence: float = 0.0  # normalized 0.0–1.0; updated by retrieve()
         kb_path = Path(kb_dir)
         if kb_path.exists():
             for f in sorted(kb_path.glob("*.md")):
@@ -54,9 +55,12 @@ class KnowledgeBase:
         """Return the most relevant knowledge base document for *query*.
 
         Scores each document by the count of query tokens that appear in the
-        document text. Returns the top-scoring document, or '' if nothing matches.
+        document text (token overlap). Normalizes the score to 0.0–1.0 by
+        dividing by the number of unique query tokens and stores it as
+        ``self.last_confidence`` for logging and testing.
         """
         if not self.docs:
+            self.last_confidence = 0.0
             return ""
 
         query_tokens = set(query.lower().split())
@@ -66,9 +70,14 @@ class KnowledgeBase:
         }
         best = max(scores, key=scores.get)
         if scores[best] == 0:
+            self.last_confidence = 0.0
             return ""
 
-        logger.debug("RAG: '%s' selected (overlap=%d) for query %r", best, scores[best], query)
+        self.last_confidence = scores[best] / len(query_tokens) if query_tokens else 0.0
+        logger.info(
+            "RAG: '%s' selected (overlap=%d, confidence=%.2f) for query %r",
+            best, scores[best], self.last_confidence, query,
+        )
         return f"[Reference: {best.replace('_', ' ').title()}]\n{self.docs[best]}"
 
 

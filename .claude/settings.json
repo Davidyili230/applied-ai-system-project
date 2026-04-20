@@ -38,7 +38,11 @@
       "Bash(pip3 show:*)",
       "Bash(/usr/local/bin/python3 -c \"import pytest\")",
       "Bash(PYTHONPATH=. pip3 run pytest tests/test_pawpal.py -v)",
-      "Bash(PYTHONPATH=. /usr/local/bin/python3 -m pytest tests/test_pawpal.py -v)"
+      "Bash(PYTHONPATH=. /usr/local/bin/python3 -m pytest tests/test_pawpal.py -v)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python3 -m pytest tests/ -v)",
+      "Bash(pytest tests/ -v)",
+      "Bash(PYTHONPATH=. pytest tests/ -v)"
     ]
   }
 }
