@@ -4,6 +4,18 @@
 
 ---
 
+## Portfolio Artifact
+
+**GitHub:** https://github.com/Davidyili230/applied-ai-system-project
+
+**Loom Video Walkthrough:** [\[Add your Loom link here after recording\]](https://www.loom.com/share/550b01b3d9904adaa9a450fe1ed59e4d)
+
+### What this project says about me as an AI engineer
+
+PawPal+ reflects how I approach AI engineering: start with a solid domain model, then layer intelligence on top of it — not the other way around. I built the scheduling engine first (conflict detection, recurrence, priority sorting) before writing a single line of AI code, which meant the Claude-powered assistant inherited real validation for free rather than reimplementing it. That decision — routing all AI tool calls through the same `Scheduler` methods the manual UI uses — is the clearest signal of how I think: correctness and reliability are architectural properties, not things you bolt on after the fact. The RAG implementation tells the same story: I chose token-overlap scoring over embeddings because the knowledge base is three short documents, and reaching for a vector database would have been complexity theater. I pick the simplest design that meets the actual requirements. That discipline — resisting over-engineering while still building something genuinely useful — is what I want any collaborator or employer to take away from this project.
+
+---
+
 ## Original Project (Modules 1–3)
 
 The original PawPal+ (Modules 1–3) was a pure-Python scheduling engine for multi-pet households. Its goals were to let a single owner register multiple pets, create time-boxed care tasks with recurrence rules, detect scheduling conflicts before they were committed, and automatically spawn the next occurrence of a recurring task when the current one was marked complete. The system already included priority-aware sorting, a greedy next-available-slot algorithm, and full JSON persistence — no AI involved.

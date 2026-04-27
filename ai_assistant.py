@@ -1,12 +1,12 @@
 """
 PawPal+ AI Assistant
 ====================
-Integrates two advanced AI features:
+Integrates two advanced AI features using Google Gemini:
 
 1. RAG (Retrieval-Augmented Generation): KnowledgeBase retrieves relevant pet
-   care guidelines before each response, grounding Claude's advice in domain facts.
+   care guidelines before each response, grounding Gemini's advice in domain facts.
 
-2. Agentic Workflow: Claude uses tool_use to autonomously read and mutate the
+2. Agentic Workflow: Gemini uses function calling to autonomously read and mutate the
    PawPal schedule (list pets, add pets, add tasks, complete tasks, find slots)
    across multiple reasoning steps within a single user request.
 """
@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+import google.generativeai as genai
 
 from pawpal_system import Frequency, Owner, Pet, Priority, Scheduler, Task
 
@@ -179,11 +179,7 @@ I'll remind you each week so Biscuit's coat stays healthy and mat-free!
 """
 
 
-# ---------------------------------------------------------------------------
-# Tool definitions (Claude tool_use schema)
-# ---------------------------------------------------------------------------
-
-_TOOLS: list[dict] = [
+_TOOLS_SCHEMA: list[dict] = [
     {
         "name": "list_pets",
         "description": "Return all pets registered under the current owner.",
@@ -303,7 +299,7 @@ class PawPalAI:
     """
 
     MAX_TOOL_ROUNDS = 8
-    MODEL = "claude-haiku-4-5-20251001"
+    MODEL = "gemini-2.0-flash"
 
     def __init__(
         self,
@@ -315,11 +311,52 @@ class PawPalAI:
         self.owner = owner
         self.scheduler = Scheduler(owner)
         self.kb = KnowledgeBase(kb_dir)
-        self.client = anthropic.Anthropic()
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        
+        # Build base system prompt
+        system_prompt = (
+            "You are PawPal AI, a friendly and knowledgeable pet care scheduling assistant. "
+            "Help the owner manage their pets' daily care tasks using the tools available. "
+            "Be concise and practical."
+        )
+        
+        # Create tools from schema
+        tools = self._convert_tools_to_gemini_format(_TOOLS_SCHEMA)
+        
+        self.client = genai.GenerativeModel(
+            self.MODEL,
+            tools=tools,
+            system_instruction=system_prompt
+        )
         self.save_callback = save_callback
         self.specialized = specialized
         self.conversation_history: list[dict] = []
         logger.info("PawPalAI ready for owner '%s'", owner.name)
+    
+    @staticmethod
+    def _convert_tools_to_gemini_format(tools_schema):
+        """Convert tool definitions to Gemini's Tool format."""
+        try:
+            from google.generativeai.protos import Tool, FunctionDeclaration
+            
+            tools = []
+            for tool_def in tools_schema:
+                # Convert input_schema to parameters
+                params = tool_def.get("input_schema", {})
+                
+                # Create function declaration - FunctionDeclaration expects 'parameters' not 'input_schema'
+                func_decl = FunctionDeclaration(
+                    name=tool_def["name"],
+                    description=tool_def["description"],
+                    parameters=params
+                )
+                tool = Tool(function_declarations=[func_decl])
+                tools.append(tool)
+            return tools
+        except Exception as e:
+            logger.warning("Could not convert tools to proto format: %s. Using fallback.", e)
+            # Return None to use genai's default handling
+            return None
 
     # ------------------------------------------------------------------
     # Tool dispatch
@@ -471,10 +508,10 @@ class PawPalAI:
 
         Flow:
           1. RAG: retrieve relevant pet care knowledge for the query.
-          2. Inject retrieved context into the system prompt.
-          3. Send conversation to Claude with tool definitions.
-          4. Execute any tool calls and feed results back (up to MAX_TOOL_ROUNDS).
-          5. Return (Claude's final text response, list of agentic steps).
+          2. Append RAG context to the user message if available.
+          3. Send conversation to Gemini with tool definitions.
+          4. Execute any function calls and feed results back (up to MAX_TOOL_ROUNDS).
+          5. Return (Gemini's final text response, list of agentic steps).
 
         Each step in the returned list has the shape:
             {"round": int, "tool": str, "input": dict, "output": str}
@@ -488,68 +525,61 @@ class PawPalAI:
         if rag_context:
             logger.info("RAG injected %d chars of context", len(rag_context))
 
-        # Step 2 — build system prompt with RAG context
-        system = (
-            "You are PawPal AI, a friendly and knowledgeable pet care scheduling assistant. "
-            "Help the owner manage their pets' daily care tasks using the tools available. "
-            "Be concise and practical. Today is "
-            + datetime.now().strftime("%A, %B %d, %Y") + "."
-        )
+        # Step 2 — enhance user message with RAG context
+        enhanced_message = user_message
         if rag_context:
-            system += f"\n\nRelevant pet care reference material:\n\n{rag_context}"
+            enhanced_message = f"{user_message}\n\n[Context Reference: {rag_context}]"
 
-        # Feature 3: inject few-shot style guide when specialized mode is active
-        if self.specialized:
-            system += f"\n\nSTYLE GUIDE AND FEW-SHOT EXAMPLES:\n{FEW_SHOT_EXAMPLES}"
-
-        # Step 3 — build message list (persistent history + new message)
-        self.conversation_history.append({"role": "user", "content": user_message})
-        messages = list(self.conversation_history)
+        # Step 3 — create chat session
+        chat_session = self.client.start_chat(history=self.conversation_history)
 
         # Step 4 — agentic loop
         for round_num in range(1, self.MAX_TOOL_ROUNDS + 1):
             logger.info("Agentic round %d/%d", round_num, self.MAX_TOOL_ROUNDS)
-            response = self.client.messages.create(
-                model=self.MODEL,
-                max_tokens=1024,
-                system=system,
-                tools=_TOOLS,
-                messages=messages,
+            response = chat_session.send_message(
+                enhanced_message if round_num == 1 else user_message,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=1024,
+                ),
             )
-            logger.info("Claude stop_reason=%s", response.stop_reason)
+            logger.info("Gemini finish_reason=%s", response.candidates[0].finish_reason)
 
-            if response.stop_reason == "end_turn":
-                text = "".join(
-                    b.text for b in response.content if hasattr(b, "text")
-                )
-                self.conversation_history.append({"role": "assistant", "content": text})
+            if response.candidates[0].finish_reason == "STOP":
+                text = response.text
+                self.conversation_history = chat_session.history
                 return text, steps
 
-            if response.stop_reason == "tool_use":
+            if response.candidates[0].finish_reason == "TOOL_CALLS":
                 tool_results = []
-                for block in response.content:
-                    if block.type == "tool_use":
-                        result = self._run_tool(block.name, block.input)
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, 'function_call') and part.function_call:
+                        result = self._run_tool(part.function_call.name, dict(part.function_call.args))
                         steps.append({
                             "round": round_num,
-                            "tool": block.name,
-                            "input": dict(block.input),
+                            "tool": part.function_call.name,
+                            "input": dict(part.function_call.args),
                             "output": result,
                         })
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": block.id,
-                                "content": result,
-                            }
-                        )
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": tool_results})
+                        try:
+                            tool_result_part = genai.types.Part.from_function_response(
+                                name=part.function_call.name,
+                                response={"result": result}
+                            )
+                            tool_results.append(tool_result_part)
+                        except Exception as e:
+                            logger.warning("Could not create function response part: %s", e)
+                            # Fallback: send result as text
+                            tool_results.append(f"Tool {part.function_call.name} result: {result}")
+                
+                # Send tool results back to the chat
+                if tool_results:
+                    chat_session.send_message(tool_results)
             else:
-                logger.warning("Unexpected stop_reason: %s", response.stop_reason)
+                logger.warning("Unexpected finish_reason: %s", response.candidates[0].finish_reason)
                 break
 
         logger.warning("MAX_TOOL_ROUNDS (%d) reached", self.MAX_TOOL_ROUNDS)
+        self.conversation_history = chat_session.history
         return (
             "I reached my complexity limit on that request. Please try breaking it into smaller steps.",
             steps,

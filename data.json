@@ -33,6 +33,50 @@
           "recurrence": "daily",
           "priority": "high",
           "id": "247913eb-2319-42b7-93c7-10f4d7a1b136",
+          "is_complete": true
+        },
+        {
+          "description": "Breakfast",
+          "duration_minutes": 10,
+          "due_time": "2026-03-02T08:00:00",
+          "recurrence": "daily",
+          "priority": "high",
+          "id": "25f356f8-38ae-4252-af7b-d079342eff5e",
+          "is_complete": false
+        }
+      ]
+    },
+    {
+      "name": "Money",
+      "species": "cat",
+      "age": 2,
+      "id": "bf8ee150-5625-4dde-b4d2-b450a42ab0c4",
+      "tasks": [
+        {
+          "description": "Night walk",
+          "duration_minutes": 15,
+          "due_time": "2026-04-27T20:00:00",
+          "recurrence": "once",
+          "priority": "medium",
+          "id": "f9d0f03f-272d-4265-9ead-16ec8e68e9f2",
+          "is_complete": true
+        },
+        {
+          "description": "Night walk",
+          "duration_minutes": 15,
+          "due_time": "2026-04-27T20:00:00",
+          "recurrence": "daily",
+          "priority": "medium",
+          "id": "549759de-328d-4a9d-8e6b-2ceaacbbd9cc",
+          "is_complete": true
+        },
+        {
+          "description": "Night walk",
+          "duration_minutes": 15,
+          "due_time": "2026-04-28T20:00:00",
+          "recurrence": "daily",
+          "priority": "medium",
+          "id": "152f10e9-875e-4fd0-ac72-28b4edc27dfe",
           "is_complete": false
         }
       ]

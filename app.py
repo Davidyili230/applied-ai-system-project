@@ -1,7 +1,9 @@
 import streamlit as st
 from datetime import datetime, date, time
 import os
+from dotenv import load_dotenv
 from pawpal_system import Owner, Pet, Task, Scheduler, Frequency, Priority
+load_dotenv()
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 st.title("🐾 PawPal+")
@@ -94,7 +96,14 @@ with tabs[0]:
     if owner.pets:
         st.write("**Registered pets:**")
         for pet in owner.pets:
-            st.write(f"- {pet.name} ({pet.species}, age {pet.age})  `id: {pet.id[:8]}`")
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.write(f"- {pet.name} ({pet.species}, age {pet.age})  `id: {pet.id[:8]}`")
+            with col2:
+                if st.button("Delete", key=f"delete_{pet.id}"):
+                    owner.remove_pet(pet.id)
+                    _save()
+                    st.rerun()
     else:
         st.info("No pets yet. Add one above.")
 
